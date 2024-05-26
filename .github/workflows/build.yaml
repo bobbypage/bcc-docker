@@ -1,0 +1,46 @@
+name: Build
+on:
+  push:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Log in to the container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Builder
+        shell: bash
+        run: |
+          export BCC_VERSION=$(curl -s https://api.github.com/repos/iovisor/bcc/releases | jq -r "[[.[] | select(.draft != true) | select(.prerelease != true)][0]][0].tag_name")
+          export CI_REGISTRY_IMAGE=${{ env.REGISTRY }}/${GITHUB_REPOSITORY}
+          export FULL_IMAGE="${CI_REGISTRY_IMAGE}:${BCC_VERSION}"
+
+          echo "BCC_VERSION: ${BCC_VERSION}"
+          echo "CI_REGISTRY_IMAGE: ${CI_REGISTRY_IMAGE}"
+          echo "FULL_IMAGE: ${FULL_IMAGE}"
+
+          if docker manifest inspect "${FULL_IMAGE}" > /dev/null; then
+            echo "${FULL_IMAGE} already exists; skipping".
+            exit 0
+          fi
+
+          git clone -b "$BCC_VERSION" --depth 1 https://github.com/iovisor/bcc.git
+          cd bcc
+          docker build -t "${FULL_IMAGE}" -f docker/Dockerfile.ubuntu .
+          docker push "${FULL_IMAGE}"
+          echo "Done! ${FULL_IMAGE} was pushed"
